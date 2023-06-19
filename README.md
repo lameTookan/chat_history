@@ -1,4 +1,8 @@
-
+### To do on the readme 
+- more bullet points
+- be more concise, this was a brain dump I know
+- Usage examples
+This will get a little better, but if I didnt do this now I was never going to. Hit me up on here for now until I set up other places to contact me because I'm honestly not on a lot of platforms. 
 
 Hey yo. I wanted to post this before I lost the nerve. I'm a newbie Python dev, and this is my first real project. It still needs a ton of work, I haven't even written test classes yet. But I wanted to get something up on here before I lost the nerve to post it.
 
