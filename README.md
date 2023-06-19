@@ -1,4 +1,4 @@
-Absolutely, I understand. I'll focus on correcting grammar and spelling while preserving your original tone and style as much as possible. Here's your revised post:
+
 
 Hey yo. I wanted to post this before I lost the nerve. I'm a newbie Python dev, and this is my first real project. It still needs a ton of work, I haven't even written test classes yet. But I wanted to get something up on here before I lost the nerve to post it.
 
