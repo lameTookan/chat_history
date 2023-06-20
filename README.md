@@ -6,3 +6,5 @@ This will get a little better, but if I didnt do this now I was never going to. 
 
 __CURRENLY VERY WIP__
 
+For more info check out my very messy and unorganized brain dump 
+https://github.com/lameTookan/chat_history/blob/main/braindump.md
