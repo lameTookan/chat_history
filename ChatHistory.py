@@ -36,7 +36,7 @@ class RoleError(Exception):
         
 class NoSystemPromptError(Exception):
     def __init__(self, message=None):
-        super().__init__("No system prompt set. Please set one using the .sys_prompt setter" if message is None else message)
+       self.message = message if message is not None else "No system prompt set"    
     def __str__(self):
         return self.message
 
@@ -50,7 +50,11 @@ class MalformedSaveDictError(Exception):
         self.message = message
     def __str__(self):
         return self.message
-    
+class BadChatLogError(Exception):
+    def __init__(self, message=None):
+        if message is None:
+            message = "Chat log is malformed"
+        super().__init__(message)
 
 
 class ChatHistory:
@@ -118,6 +122,14 @@ class ChatHistory:
             max_model_tokens = self.chat.max_model_tokens
             max_completion_tokens = self.chat.max_completion_tokens
             save_dict = {
+                "general_info": {
+                    "date": datetime.now().strftime("%d/%m/%Y, %H:%M:%S"),
+                    "chat_log_folder": self.chat.save_to_file.chat_log_folder,
+                    "allowed_roles": self.chat.allowed_roles,
+                    "system_prompt_wildcards": self.chat.system_prompt_wildcards,
+                    "token_counter_function": self.chat._count_tokens.__name__
+                    
+                },
                 "sys_prompt": sys_prompt,
                 "full_chat_log": full_chat_log,
                 "trimmed_chat_log": trimmed_chat_log,
@@ -129,6 +141,20 @@ class ChatHistory:
 
                 }
             }
+            if self.chat.is_loaded:
+                save_dict["loaded_from"] = self.chat.loaded_from
+            if self.chat.prompt_shift is not None:
+                save_dict["prompt_shift"] = {
+                    "shift_until": self.chat.shift_until,
+                    "value": self.chat.prompt_shift
+                }
+            else:
+                save_dict["prompt_shift"] = None
+            if self.chat._reminder_value is not None:
+                save_dict["reminder_value"] = self.chat._reminder_value
+            else:
+                save_dict["reminder_value"] = None
+            
             return save_dict
         def load_from_dict(self, save_dict: dict) -> None:
             self.check_save_dict(save_dict)
@@ -140,6 +166,11 @@ class ChatHistory:
             self.chat.max_model_tokens = save_dict["token_info"]["max_model_tokens"]
             self.chat.max_completion_tokens = save_dict["token_info"]["max_completion_tokens"]
             self.chat.is_loaded = True
+            self.chat.loaded_from = save_dict["loaded_from"] if "loaded_from" in save_dict else None
+            self.chat.prompt_shift = save_dict["prompt_shift"]["value"] if save_dict["prompt_shift"] is not None else None
+            self.chat.shift_until = save_dict["prompt_shift"]["shift_until"] if save_dict["prompt_shift"] is not None else None
+            self.chat._reminder_value = save_dict["reminder_value"] if "reminder_value" in save_dict else None
+       
 
         def check_save_dict(self, save_dict: dict) -> None:
             "Checks if save_dict is valid, raises MalformedSaveDictError if not"
@@ -219,6 +250,27 @@ class ChatHistory:
             file_name = self._add_file_path(file_name)
             return os.path.exists(file_name)
     
+    def clear(self, clear_token_info: bool = False ) -> None:
+        """Clears chat history"""
+        self.chat_log = []
+        self.trimmed_chat_log = []
+        self.trimmed_messages = 0
+        self.is_loaded = False
+        self.loaded_from = None
+        self.reminder = None
+        self.sys_prompt = None
+        self.prompt_shift = None
+        if clear_token_info:
+            self.modify_token_info(0, 0, 0)
+        
+    def modify_token_info(self, max_model_tokens: int = None, max_completion_tokens: int = None, token_padding: int = None) -> None:
+        """Modifies token info and works out tokens"""
+        self.max_chat_log_tokens = self._val_if_not_None(max_model_tokens, self.max_chat_log_tokens)
+        self.max_model_tokens = self._val_if_not_None(max_model_tokens, self.max_model_tokens)
+        self.max_completion_tokens = self._val_if_not_None(max_completion_tokens, self.max_completion_tokens)
+        self.token_padding = self._val_if_not_None(token_padding, self.token_padding)
+        self.work_out_tokens()
+        self.trim_chat_log()
 
     def _default_count_tokens(self, text: str, model = "gpt-4") -> int:
             """Returns the number of tokens in a string"""
@@ -234,8 +286,8 @@ class ChatHistory:
   
     def _format_message (self, message: str, role: str) -> dict:
         """Format a message to be added to the chat log"""
-        if role not in ChatHistory.allowed_roles:
-            raise RoleError(role, ChatHistory.allowed_roles)
+        if role not in self.allowed_roles:
+            raise RoleError(role, self.allowed_roles)
         return {
             "role": role,
             "content": message,
@@ -259,7 +311,20 @@ class ChatHistory:
         elif message['role'] == 'assistant':
             pretty_message = ">> " + ms.cyan(message['content'])
         return pretty_message
-            
+    def _check_message_dict(self, message: dict) -> None:
+        if not isinstance(message, dict):
+            raise TypeError("Message must be a dict")
+        if not "role" in message.keys():
+            raise BadChatLogError("A role is required")
+        if message['role'] not in self.allowed_roles:
+            raise RoleError(message['role'], self.allowed_roles)
+        if not "content" in message.keys():
+            raise BadChatLogError("A content is required")
+    def load_from_list(self, chat_log: list) -> None:
+        """Loads a chat log from a list"""
+        for message in chat_log:
+            self._check_message_dict(message)
+            self.add_message(message['content'], message['role'])
 
     def save(self, file_name, overwrite=False) -> None:
         """Calls the ChatHistory.save_to_file.save method"""
@@ -272,14 +337,14 @@ class ChatHistory:
             
     def check_sys_prompt(self) -> None:
         """Check that the system prompt is not None. If it is, raise an error"""
-        if self.sys_prompt is None:
+        if self._sys_prompt is None:
             raise NoSystemPromptError
     
     
 
     def add_sys_wildcards(self, text, ) -> str:
         """Adds wildcards to the given string"""
-        wildcards = {name: value['value']  for name, value in self.system_prompt_wildcards}
+        wildcards = {name: value['value']  for name, value in self.system_prompt_wildcards.items()}
         wildcards['shift'] = self.prompt_shift if self.prompt_shift is not None else " "
         return text.format(**wildcards)
     @property
@@ -294,22 +359,30 @@ class ChatHistory:
         self._sys_prompt = value
         self.work_out_tokens()
     @property
-    def reminder (self, reminder: str) -> str:
+    def reminder (self) -> str:
         """Returns the value of a reminder"""
         if  not self._reminder_value == None :
-            return self.add_sys_wildcards(self._reminder_value)
+            return "Reminder" + self.add_sys_wildcards(self._reminder_value)
         else:
-            return False
+            return None
     @reminder.setter
     def reminder(self, value: str) -> None:
         """Sets the value of a reminder"""
-        self._reminder_value = "Reminder: " + value
+       
+            
+        self._reminder_value = value
+
+        self.work_out_tokens()
+        self.trim_chat_log()
+    
     
     def work_out_tokens (self) -> None:
         """Work out how many tokens are left for the chat log after the system prompt and the padding are taken into account"""
         self.check_sys_prompt()
         sys_prompt_tokens = self._count_tokens(self.sys_prompt)
-        self.max_chat_log_tokens = self.max_model_tokens -(sys_prompt_tokens + self.token_padding + self.max_completion_tokens)
+        reminder_tokens = 0 if self.reminder is None else self._count_tokens(self.reminder)
+        shift_tokens = 0 if self.prompt_shift is None else self._count_tokens(self.prompt_shift)
+        self.max_chat_log_tokens = self.max_model_tokens -(sys_prompt_tokens + self.token_padding + self.max_completion_tokens + reminder_tokens + shift_tokens)
     def add_message(self, message: str, role: str) -> None:
         """Add a message to the chat log"""
         if role == "assistant":
@@ -333,7 +406,7 @@ class ChatHistory:
         self.check_sys_prompt()
 
         formatted_system_prompt = self._format_message(self.sys_prompt, "system")
-        if self.reminder is not False:
+        if self.reminder != None:
             formatted_reminder = self._format_message(self.reminder, "system")
             finished = [formatted_system_prompt]+ self.trimmed_chat_log + [formatted_reminder]
         else:
@@ -398,14 +471,18 @@ class ChatHistory:
     def set_prompt_shift(self, value, until = None) -> None:
         """Sets {shift} wildcard to the given value, and sets the prompt shift to expire after until ticks, or never if until is None"""
         self.prompt_shift = value
-        self.prompt_shift_until = until
+        self.shift_until = until
+        self.work_out_tokens()
+        self.trim_chat_log()
     def shift_tick (self) -> None:
         """Tick down the prompt shift, and remove it if it has expired"""
-        if self.prompt_shift_until is not None:
-            self.prompt_shift_until -= 1
-            if self.prompt_shift_until == 0:
+        if self.shift_until is not None:
+            self.shift_until -= 1
+            if self.shift_until == 0:
                 self.prompt_shift = None
-                self.prompt_shift_until = None
+                self.shift_until = None
+                self.work_out_tokens()
+                self.trim_chat_log()
    
 
         
@@ -442,7 +519,7 @@ class ChatHistory:
         system_prompt_wildcards = {system_prompt_wildcards}
         allowed_roles = {allowed_roles}
         shift = {shift} until {shift_until}
-        """.format(sys_prompt = self.sys_prompt, is_loaded = self.is_loaded, loaded_from = self.loaded_from, shift = self.prompt_shift, shift_until = self.prompt_shift_until if not self.prompt_shift_until == None else "Forever" , **self.constructor_args)
+        """.format(sys_prompt = self.sys_prompt, is_loaded = self.is_loaded, loaded_from = self.loaded_from, shift = self.prompt_shift, shift_until = self.shift_until if not self.shift_until == None else "Forever" , **self.constructor_args)
         return constructor + important_vars
     def __len__(self):
         """Return the number of messages in the chat log"""
