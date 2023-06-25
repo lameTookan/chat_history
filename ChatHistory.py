@@ -8,20 +8,25 @@ import sys
 import json
 from datetime import datetime, timedelta
 import MyStuff as ms 
+import functions as fn 
 import my_secrets as secrets
+from collections import deque
 from typing import Callable, List, Union, Tuple, Dict, Any, Optional
 """
 to do 
 [] Clean up code, improve documentation comments, and type hints 
-[] Make new unittest classes for the recently added functions
+[x] Make new unittest classes for the recently added functions
 [] Impliment by none_or_value function thru out my code
 [] Maybe move system prompt and reminder methods to another nested class
-[] Finish or scrap new search and edit methods
+[x] Finish or scrap new search and edit methods
     []  Refactor the full chat_history if I want to keep these methods
 [] Decide if the prompt shift feature is worth keeping or if it overcomplicates things
-[] Add an ability to edit the _make_message_pretty method to be configurable in the constructor(passing a function refrence as a parameter)
-[] Change the make message pretty class to not rely on my MyStuff module, add the colors directly in this method 
-
+[x] Add an ability to edit the _make_message_pretty method to be configurable in the constructor(passing a function refrence as a parameter)
+[x] Change the make message pretty class to not rely on my MyStuff module, add the colors directly in this method 
+[] Test out saving and loading
+[] Change the token counting system - store trimmed chat log as a list of tuples and dictionaries so we dont have to count each message every single iteration 
+[] Make sure save file accomidates new deque strcuture 
+[] 
 
 """
 class RoleError(Exception):
@@ -55,6 +60,17 @@ class BadChatLogError(Exception):
         if message is None:
             message = "Chat log is malformed"
         super().__init__(message)
+class BadFuncRefProvidedError(Exception):
+    def __init__(self, message=None):
+        prepend = "Function reference provided does not return expected data type: "
+        if message is None:
+            message = prepend
+        else:
+            message = prepend + message
+        self.message = message
+    def __str__(self):
+        return self.message
+        
 
 
 class ChatHistory:
@@ -74,16 +90,25 @@ class ChatHistory:
 
         }
     }
+    _val_if_not_None = lambda val, default: val if val is not None else default
+
     default_sys_prompt = "You are a helpful AI Assistant. It is currently {date}, and the training data was last updated on {cut_off_date}. {shift}"
-    def __init__(self, max_model_tokens= 8000, max_completion_tokens=1000, token_padding = 500, chat_log_folder="chat_logs", allowed_roles = None, system_prompt_wildcards = None, token_counter_function = None):
+    def __init__(self, 
+            max_model_tokens= 8000, max_completion_tokens=1000, token_padding = 500, 
+            chat_log_folder="chat_logs", allowed_roles = None,
+            system_prompt_wildcards = None, token_counter_function = None, get_pretty_message_function = None):
+        # replace _count_tokens with a function that takes a string and returns the number of tokens in that string during initialization if one is provided 
         self._count_tokens = token_counter_function if token_counter_function is not None else self._default_count_tokens
+        # replace _get_pretty_message with a function that takes a message and returns a stylized version of that message during initialization if one is provided
+        self._get_pretty_message = self._default_get_pretty_message if get_pretty_message_function is None else get_pretty_message_function
+
         self.allowed_roles = self.default_allowed_roles if allowed_roles is None else allowed_roles
       
         self.system_prompt_wildcards = self.default_system_prompt_wildcards if system_prompt_wildcards is None else system_prompt_wildcards
         self.max_model_tokens = max_model_tokens
         self.max_completion_tokens = max_completion_tokens
         self.full_chat_log = []
-        self.trimmed_chat_log = []
+        self.trimmed_chat_log = deque()
         self._sys_prompt = None
         self.max_chat_log_tokens = None
         self.token_padding = token_padding
@@ -94,6 +119,7 @@ class ChatHistory:
         self.prompt_shift = None
         self.shift_until = None
         self._reminder_value = None 
+        
        
         self.save_dict = self.SaveDict(self)
         self.save_to_file = self.SaveToFile(self, chat_log_folder)
@@ -107,7 +133,8 @@ class ChatHistory:
 
 
         }
-        self._val_if_not_None = lambda val, default: val if val is not None else default
+
+        
 
     class SaveDict:
         def __init__(self, chat_history: 'ChatHistory'):
@@ -292,13 +319,17 @@ class ChatHistory:
             "role": role,
             "content": message,
         }
-   
-    def _get_pretty_message(self, message:dict) -> str:
+    def _check_token_counter(self, func_ref) -> None:
+        val = func_ref('test')
+        if not isinstance(val, int):
+            raise TypeError("Token counter function must return an int")
+    def _default_get_pretty_message(self, message:dict) -> str:
         """Gets a pretty verison of a message
         What is pretty?
         User messages are prefixed with a >, and uncoloured
         System messages are prefixed with a >>>, and coloured yellow
         Assistant messages are prefixed with a >>, and coloured cyan
+        Please, note that this only the *default* get_pretty_message, you can change this by passing a get_pretty_message function to the ChatHistory constructor
         """
         role = message['role']
         
@@ -307,9 +338,9 @@ class ChatHistory:
         if message['role'] == 'user':
             pretty_message = "> " + message['content']
         elif message['role'] == 'system':
-            pretty_message = ">>> " + ms.yellow(message['content'])
+            pretty_message = ">>> " + "\u001b[33m"+message['content'] +" \u001b[0m"
         elif message['role'] == 'assistant':
-            pretty_message = ">> " + ms.cyan(message['content'])
+            pretty_message = ">> " + " \u001b[36m"+ message['content']+ "\u001b[0m"
         return pretty_message
     def _check_message_dict(self, message: dict) -> None:
         if not isinstance(message, dict):
@@ -320,9 +351,9 @@ class ChatHistory:
             raise RoleError(message['role'], self.allowed_roles)
         if not "content" in message.keys():
             raise BadChatLogError("A content is required")
-    def load_from_list(self, chat_log: list) -> None:
+    def add_message_list(self, chat_list: list) -> None:
         """Loads a chat log from a list"""
-        for message in chat_log:
+        for message in chat_list:
             self._check_message_dict(message)
             self.add_message(message['content'], message['role'])
 
@@ -397,7 +428,7 @@ class ChatHistory:
         self.check_sys_prompt()
         """Trim the chat log to the maximum number of tokens allowed"""
         while self._count_tokens_in_chat_log(self.trimmed_chat_log) > self.max_chat_log_tokens:
-            self.trimmed_chat_log.pop(0)
+            self.trimmed_chat_log.popleft()
             self.trimmed_messages += 1
     @property
     def finished_chat_log(self) -> list:
@@ -406,11 +437,12 @@ class ChatHistory:
         self.check_sys_prompt()
 
         formatted_system_prompt = self._format_message(self.sys_prompt, "system")
+        finished = []
         if self.reminder != None:
             formatted_reminder = self._format_message(self.reminder, "system")
-            finished = [formatted_system_prompt]+ self.trimmed_chat_log + [formatted_reminder]
+            finished = [formatted_system_prompt] + list(self.trimmed_chat_log) + [formatted_reminder]
         else:
-            finished = [formatted_system_prompt]+ self.trimmed_chat_log
+            finished = [formatted_system_prompt]+ list(self.trimmed_chat_log)
         return finished 
     def get_messages (self, n = 1, role = None, pretty = False, reverse = False) -> Union[list, dict, str]:
         self.check_sys_prompt()
@@ -483,11 +515,7 @@ class ChatHistory:
                 self.shift_until = None
                 self.work_out_tokens()
                 self.trim_chat_log()
-   
 
-        
-
-    
     def __str__(self)-> str:
         """Return a pretty version of the chat log"""
         return self.get_messages(pretty=True)
@@ -525,4 +553,17 @@ class ChatHistory:
         """Return the number of messages in the chat log"""
         return len(self.trimmed_chat_log)
     
-
+class TimeContextManager:
+    def __init__(self):
+        self.time_start = None
+        self.time_end = None
+        self.time_taken = None
+    def __enter__(self):
+        self.time_start = time.time()
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.time_end = time.time()
+        self.time_taken = self.time_end - self.time_start
+        print("Time taken: {0:.2f} seconds".format(self.time_taken))
+        return False
+    

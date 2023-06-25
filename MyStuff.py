@@ -7,6 +7,7 @@ class fg:
   magenta = "\u001b[35m"
   cyan = "\u001b[36m"
   white = "\u001b[37m"
+  reset = "\u001b[0m"
 
   def rgb(r, g, b): return f"\u001b[38;2;{r};{g};{b}m"
 
@@ -45,30 +46,30 @@ colors_bg = {
     "cyan": "\u001b[46m",
     "white": "\u001b[47m"
 }
-
 def yellow(text):
-  return f"{fg.yellow}{text}{fg.white}"
+  return f"{fg.yellow}{text}{fg.reset}"
 def red(text):
-  return f"{fg.red}{text}{fg.white}"
+  return f"{fg.red}{text}{fg.reset}"
 def green(text):
-  return f"{fg.green}{text}{fg.white}"
+  return f"{fg.green}{text}{fg.reset}"
 def blue(text):
-  return f"{fg.blue}{text}{fg.white}"
+  return f"{fg.blue}{text}{fg.reset}"
 def magenta(text):
-  return f"{fg.magenta}{text}{fg.white}"
+  return f"{fg.magenta}{text}{fg.reset}"
 def cyan(text):
-  return f"{fg.cyan}{text}{fg.white}"
+  return f"{fg.cyan}{text}{fg.reset}"
 def white(text):
-  return f"{fg.white}{text}{fg.white}"
+  return f"{fg.white}{text}{fg.reset}"
 def underline(text):
-	return f"\u001b[4m{text}{fg.white}"
+	return f"\u001b[4m{text}{fg.reset}"
 def bold(text):
-	return f"\u001b[1m{text}{fg.white}"
+	return f"\u001b[1m{text}{fg.reset}"
 def italic(text):
-	return f"\u001b[3m{text}{fg.white}"
+	return f"\u001b[3m{text}{fg.reset}"
 def print_colors(text):
 	for color in colors_fg:
-		print(f"{colors_fg[color]}{text}{fg.white}")
+		print(f"{colors_fg[color]}{text}{fg.reset}")
+
 	
 
 dividers_basic = {
